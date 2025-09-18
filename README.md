@@ -27,5 +27,5 @@ The program runs indefinetily until CTRL-C is passed to it. It receives the foll
 
 > `<INTERFACE>`: Desired interface to capture packets.  
 > `<OUTPUT_FOLDER>`: Output folder for the pcaps which the program creates if it does not exist.    
-> `<PORT_TO_MONITOR>`: Restrict the monitored traffic to only a specific port (Default is 443).
+> `<PORT_TO_MONITOR>`: Restrict the monitored traffic to only a specific port (Default is 443).     
 > `<CAPTURING_TIME>`: Rotating interval to record files in a new pcap (Default is 60s).
