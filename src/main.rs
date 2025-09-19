@@ -62,6 +62,18 @@ struct Flow {
     server_port: u16
 }
 
+const POSSIBLE_VERSIONS: [usize; 11] = [0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x101, 0x7f17, 0xfb17, 0x7f1a, 0xfb1a, 0x7f1c];
+const BITMAP_POSSIBLE_VERSIONS: [bool; 65536] = {
+    let mut array = [false; 65536];
+    let mut i = 0;
+    while i < POSSIBLE_VERSIONS.len() {
+        array[POSSIBLE_VERSIONS[i]] = true;
+        i += 1;
+    }
+    array
+};
+
+
 fn main()  {
     let args = Args::parse();
 
@@ -211,7 +223,9 @@ fn main()  {
 
                 let mut tracker = tls_flow_tracker.lock().unwrap();
                 // Check if is a Client Hello and save the Handshake version
-                if tcp_payload_len > 10 && tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_CLIENT_HELLO {
+                if tcp_payload_len > 10 && tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_CLIENT_HELLO
+                    && BITMAP_POSSIBLE_VERSIONS[u16::from_be_bytes([tcp_payload[1], tcp_payload[2]]) as usize]
+                    && BITMAP_POSSIBLE_VERSIONS[u16::from_be_bytes([tcp_payload[9], tcp_payload[10]]) as usize]  {
                     if !tracker.contains_key(&flow) {
                         let now = Instant::now();
                         tracker.insert(flow.clone(), (tcp_payload[9], tcp_payload[10], now));
@@ -246,7 +260,6 @@ fn main()  {
                         let mut tls_offset: usize = 0;
                         if tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_SERVER_HELLO && ((tcp_payload[1], tcp_payload[2]) == (tls_version.0, tls_version.1)){
                             tls_offset = u16::from_be_bytes([tcp_payload[3], tcp_payload[4]]) as usize + TLS_RECORD_SIZE; // Go past Server Hello
-                            
                              // There is no record data after the server hello, save packet and continue to the next one
                             if tls_offset + 2 >= tcp_payload_len{
                                 output_pcap.lock().unwrap().write(&packet);
