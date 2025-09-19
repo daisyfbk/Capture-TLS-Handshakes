@@ -9,7 +9,32 @@ use chrono;
 use clap::Parser;
 use pcap::{Capture};
 
+
+// Sizes in bytes
+const ETH_SIZE: usize = 14;
+const IPV4_MIN_SIZE: usize = 20;
+const IPV6_SIZE: usize = 40;
+const TCP_MIN_SIZE: usize = 20;
 const TLS_RECORD_SIZE: usize = 5;
+
+// Protocol values, TCP Flags and TLS values
+const VLAN: u16 = 0x8100;
+const IPV4: u16 = 0x0800;
+const IPV6: u16 = 0x86DD;
+const TCP: u8 = 0x06;
+
+const TCP_FIN: u8 = 0x01;
+const TCP_RST: u8 = 0x04;
+
+const TLS_CCS_RECORD: u8 = 0x14;
+const TLS_ALERT_RECORD: u8 = 0x15;
+const TLS_HANDSHAKE_RECORD: u8 = 0x16;
+const TLS_DATA_RECORD: u8 = 0x17;
+
+const TLS_CLIENT_HELLO: u8 = 0x01;
+const TLS_SERVER_HELLO: u8 = 0x02;
+
+
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -39,8 +64,7 @@ struct Flow {
 
 fn main()  {
     let args = Args::parse();
-   
-    println!("Starting capture on interface: {}", args.interface);
+
     let mut cap = Capture::from_device(args.interface.as_str())
         .unwrap()
         .promisc(true)
@@ -50,7 +74,6 @@ fn main()  {
         .expect("Failed to open capture interface")
         .setnonblock()
         .unwrap();
-
     let linktype = cap.get_datalink();
 
     let tls_flow_tracker = Arc::new(Mutex::new(HashMap::<Flow, (u8, u8, Instant)>::new()));
@@ -60,15 +83,9 @@ fn main()  {
         std::fs::create_dir_all(&args.output_folder).expect("Failed to create output folder");
     }
 
-    let filename: String = chrono::offset::Utc::now().to_string().split(".").next().unwrap()
-        .chars().map(|c|match c {
-            ':' => '-',
-            ' ' => '_',
-            _ => c,
-        }
-    ).collect();
+    let filename: String = chrono::offset::Utc::now().to_string().split(".").next().unwrap().replace(":", "-").replace(" ", "__");
     let output_pcap = Arc::new(Mutex::new(
-        cap.savefile(format!("{}/{}.pcap", args.output_folder, filename))
+        cap.savefile(format!("{}/log_{}.pcap", args.output_folder, filename))
             .expect("Failed to create output pcap"),
     ));
     let output_pcap_clone = Arc::clone(&output_pcap);
@@ -79,15 +96,9 @@ fn main()  {
             thread::sleep(Duration::from_secs(args.capturing_time));
             let mut output_pcap_guard = output_pcap_clone.lock().unwrap();
 
-            let filename: String = chrono::offset::Utc::now().to_string().split(".").next().unwrap()
-                .chars().map(|c|match c {
-                    ':' => '-',
-                    ' ' => '_',
-                    _ => c,
-                }
-            ).collect();
+            let filename: String = chrono::offset::Utc::now().to_string().split(".").next().unwrap().replace(":", "-").replace(" ", "__");
             *output_pcap_guard = Capture::dead(linktype).unwrap()
-                                    .savefile(format!("{}/{}.pcap", args.output_folder, filename))
+                                    .savefile(format!("{}/log_{}.pcap", args.output_folder, filename))
                                     .expect("Failed to create output pcap");
 
             let mut tracker = tracker_clone.lock().unwrap();
@@ -105,16 +116,18 @@ fn main()  {
         println!("Ctrl+C pressed.");
     }).expect("Error setting Ctrl-C handler");
 
+    println!("Starting capture on interface: {}", args.interface);
     println!("Press CTRC-C to gracefully stop it\n");
     while running.load(Ordering::SeqCst) {
         if let Ok(packet) = cap.next_packet() {
-            if packet.data.len() < 14 {
+            if packet.data.len() < ETH_SIZE {
                 continue;
             }
             let mut ethertype = u16::from_be_bytes([packet.data[12], packet.data[13]]);
-            let mut offset = 14;
+            let mut offset = ETH_SIZE;
 
-            if ethertype == 0x8100 {
+            // Read VLAN header
+            if ethertype == VLAN {
                 if packet.data.len() < offset + 4 {
                     continue;
                 }
@@ -124,8 +137,8 @@ fn main()  {
 
             // Parse IPv4 or IPv6
             let (ip_proto, len_after_ip,  ip_payload_offset, client_ip, server_ip) = match ethertype {
-                0x0800 => { 
-                    if packet.data.len() < offset + 20 {
+                IPV4 => { 
+                    if packet.data.len() < offset + IPV4_MIN_SIZE {
                         continue;
                     }
                     let len = u16::from_be_bytes([packet.data[offset + 2], packet.data[offset + 3]]) as usize;
@@ -135,25 +148,24 @@ fn main()  {
                     let dst_ip = &packet.data[offset + 16..offset + 20];
                     (proto, len - ihl, offset + ihl, src_ip.to_vec(), dst_ip.to_vec())
                 }
-                0x86DD => { 
-                    if packet.data.len() < offset + 40 {
+                IPV6 => { 
+                    if packet.data.len() < offset + IPV6_SIZE {
                         continue;
                     }
                     let len = u16::from_be_bytes([packet.data[offset + 4], packet.data[offset + 5]]) as usize;
                     let proto = packet.data[offset + 6];
                     let src_ip = &packet.data[offset + 8..offset + 24];
                     let dst_ip = &packet.data[offset + 24..offset + 40];
-                    (proto, len - 40, offset + 40, src_ip.to_vec(), dst_ip.to_vec())
+                    (proto, len - IPV6_SIZE, offset + IPV6_SIZE, src_ip.to_vec(), dst_ip.to_vec())
                 }
                 _ => {
                     continue;
                 }
             };
 
-            // Only TCP
-            // No parsing of IPv6 extension
-            if ip_proto == 6 {
-                if packet.data.len() < ip_payload_offset + 20 {
+            // Only TCP and no parsing of IPv6 extension for now
+            if ip_proto == TCP {
+                if packet.data.len() < ip_payload_offset + TCP_MIN_SIZE {
                     continue;
                 }
 
@@ -177,7 +189,7 @@ fn main()  {
                 let tcp_payload_len = len_after_ip - tcp_header_size; // Len from IP header - IP header size - TCP header size
 
                 // No payload and not TCP connection ending go to the next packet
-                if tcp_payload_len == 0 && (tcp_flags & 1 != 1 || tcp_flags & 4 != 4) {
+                if tcp_payload_len == 0 && (tcp_flags & TCP_FIN != TCP_FIN || tcp_flags & TCP_RST != TCP_RST) {
                     continue;
                 }
 
@@ -199,7 +211,7 @@ fn main()  {
 
                 let mut tracker = tls_flow_tracker.lock().unwrap();
                 // Check if is a Client Hello and save the Handshake version
-                if tcp_payload_len > 10 && tcp_payload[0] == 0x16 && tcp_payload[5] == 0x01 {
+                if tcp_payload_len > 10 && tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_CLIENT_HELLO {
                     if !tracker.contains_key(&flow) {
                         let now = Instant::now();
                         tracker.insert(flow.clone(), (tcp_payload[9], tcp_payload[10], now));
@@ -210,7 +222,7 @@ fn main()  {
                 }
 
                 let mut flow_exists = false;
-                let version = match tracker.get(&flow) {
+                let tls_version = match tracker.get(&flow) {
                     Some(&(first, second, _)) => {
                         flow_exists = true;
                         (first, second)
@@ -226,16 +238,16 @@ fn main()  {
                 
                 if flow_exists{
                     // If it is a TCP packet with FIN/RST flag stop monitoring (Safety measure to remove flows)
-                    if tcp_flags & 1 == 1 || tcp_flags & 4 == 4{
+                    if tcp_flags & TCP_FIN == TCP_FIN || tcp_flags & TCP_RST == TCP_RST {
                         tracker.remove(&flow);
                         tracker.remove(&inverse_flow);
                     }else if tcp_payload_len > TLS_RECORD_SIZE{
                         let mut save_pkt = true; // By default, packets for a tracked flow should be fowarded
                         let mut tls_offset: usize = 0;
-                        if tcp_payload[0] == 0x16 && tcp_payload[5] == 0x02 && ((tcp_payload[1], tcp_payload[2]) == (version.0, version.1)){
+                        if tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_SERVER_HELLO && ((tcp_payload[1], tcp_payload[2]) == (tls_version.0, tls_version.1)){
                             tls_offset = u16::from_be_bytes([tcp_payload[3], tcp_payload[4]]) as usize + TLS_RECORD_SIZE; // Go past Server Hello
                             
-                             // Server Hello continues in another packet, save it and continue to next packet
+                             // There is no record data after the server hello, save packet and continue to the next one
                             if tls_offset + 2 >= tcp_payload_len{
                                 output_pcap.lock().unwrap().write(&packet);
                                 continue;
@@ -243,8 +255,8 @@ fn main()  {
                         } 
 
                         // If packet begins or has after the Server Hello a non-Handshake Record, stop capturing packets
-                        if (tcp_payload[tls_offset] == 0x14 || tcp_payload[tls_offset] == 0x15 || tcp_payload[tls_offset] == 0x17) && 
-                            ((tcp_payload[tls_offset + 1], tcp_payload[tls_offset + 2]) == (version.0, version.1)){
+                        if (tcp_payload[tls_offset] == TLS_CCS_RECORD || tcp_payload[tls_offset] == TLS_ALERT_RECORD || tcp_payload[tls_offset] == TLS_DATA_RECORD) && 
+                            ((tcp_payload[tls_offset + 1], tcp_payload[tls_offset + 2]) == (tls_version.0, tls_version.1)){
                             tracker.remove(&flow);
                             tracker.remove(&inverse_flow);
 
