@@ -116,7 +116,7 @@ fn main()  {
             let mut tracker = tracker_clone.lock().unwrap();
             let now = Instant::now();
             tracker.retain(|_, &mut (_, _, last_seen)| now.duration_since(last_seen) < Duration::from_secs(args.capturing_time)); // Remove idle flows
-
+            println!("Finished cleaning")
         }
     });
 
@@ -288,4 +288,9 @@ fn main()  {
             }       
         }
     }
+
+    let _result = match output_pcap.lock().unwrap().flush(){
+        Ok(_) => {},
+        Err(_error) => return,
+    };
 }
