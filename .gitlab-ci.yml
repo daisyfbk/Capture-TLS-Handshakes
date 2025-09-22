@@ -20,16 +20,27 @@ prepare:
     reports:
       dotenv: variables.env
 
+
+tests:
+  stage: test
+  image: rust
+  script:
+    - echo "======== TESTS JOB ========"
+    - apt update
+    - apt install lld clang -y
+    - cargo test
+
 build:
   stage: build
   image: ubuntu:24.04
   needs:
+    - job: test
     - job: prepare
       artifacts: true
   script:
     - echo "======== BUILD ========"
     - apt update
-    - apt install clang curl -y
+    - apt install lld clang curl -y
     - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     - source "$HOME/.cargo/env"
     - cargo build --release
