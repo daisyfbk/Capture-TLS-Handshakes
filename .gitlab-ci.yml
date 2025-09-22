@@ -41,6 +41,24 @@ build:
     paths:
       - bin/
 
+upload:
+  stage: upload
+  image: curlimages/curl:latest
+  needs:
+    - job: prepare
+      artifacts: true
+    - job: build
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never # Do not run this job when a tag is created manually
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run this job when commits are pushed or merged to the default branch
+  script:
+    - echo "======== UPLOAD JOB ========"
+    - ls -la bin/
+    - ls bin/capture-tls-handshakes-v${PKG_VERSION}
+    - 'curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file bin/capture-tls-handshakes-v${PKG_VERSION} ${PKG_REGISTRY_URL}/x86_64-unknown-linux-gnu/v${PKG_VERSION}/capture-tls-handshakes'
+
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
@@ -62,21 +80,3 @@ release:
       links:
         - name: "v$PKG_VERSION"
           url: "${PKG_REGISTRY_URL}/x86_64-unknown-linux-gnu/v${PKG_VERSION}/capture-tls-handshakes"
-
-
-upload:
-  stage: upload
-  image: curlimages/curl:latest
-  needs:
-    - job: prepare
-      artifacts: true
-    - job: build
-      artifacts: true
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: never # Do not run this job when a tag is created manually
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run this job when commits are pushed or merged to the default branch
-  script:
-    - echo "======== UPLOAD JOB ========"
-    - ls -la bin/
-    - 'curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file bin/capture-tls-handshakes-v${PKG_VERSION} ${PKG_REGISTRY_URL}/x86_64-unknown-linux-gnu/v${PKG_VERSION}/capture-tls-handshakes'
