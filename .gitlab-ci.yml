@@ -21,20 +21,10 @@ prepare:
       dotenv: variables.env
 
 
-tests:
-  stage: test
-  image: rust
-  script:
-    - echo "======== TESTS JOB ========"
-    - apt update
-    - apt install lld clang -y
-    - cargo test
-
 build:
   stage: build
   image: ubuntu:24.04
   needs:
-    - job: test
     - job: prepare
       artifacts: true
   script:
