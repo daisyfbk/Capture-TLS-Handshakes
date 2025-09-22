@@ -90,6 +90,7 @@ fn main()  {
         .unwrap();
     let linktype = cap.get_datalink();
 
+    // Tracking handshakes and saving packets
     let mut tls_flow_tracker = HashMap::<Flow, (u8, u8, Instant)>::new();
     let mut reset_tracker = Instant::now();
 
@@ -127,6 +128,8 @@ fn main()  {
 
     println!("Starting capture on interface: {}", args.interface);
     println!("Press CTRC-C to gracefully stop it\n");
+
+    // Main loop to process packets
     while running.load(Ordering::SeqCst) {
         if let Ok(packet) = cap.next_packet() {
             if packet.data.len() < ETH_SIZE {
@@ -210,15 +213,6 @@ fn main()  {
                     server_port: dst_port,
                 };
 
-                let inverse_flow = Flow {
-                    layer4_protocol: ip_proto as u16,
-                    client_ip: server_ip.clone(),
-                    server_ip: client_ip.clone(),
-                    client_port: dst_port,
-                    server_port: src_port,
-                };
-
-                //let mut tracker = tls_flow_tracker.lock().unwrap();
                 // Check if is a Client Hello and save the Handshake version
                 if tcp_payload_len > 10 && tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_CLIENT_HELLO
                     && BITMAP_POSSIBLE_VERSIONS[u16::from_be_bytes([tcp_payload[1], tcp_payload[2]]) as usize]
@@ -230,8 +224,15 @@ fn main()  {
                         output_pcap.lock().unwrap().write(&packet);
                         continue;
                     }
-                    // Check if is CLient Hello and flow exists??
                 }
+
+                let inverse_flow = Flow {
+                    layer4_protocol: ip_proto as u16,
+                    client_ip: server_ip.clone(),
+                    server_ip: client_ip.clone(),
+                    client_port: dst_port,
+                    server_port: src_port,
+                };
 
                 let mut flow_exists = false;
                 let tls_version = match tls_flow_tracker.get(&flow) {
@@ -286,13 +287,11 @@ fn main()  {
             }       
         }
 
+        // Clean HashMap of old entries 
         let now = Instant::now();
         if now.duration_since(reset_tracker) >  Duration::from_secs(CLEAR_OLD_ENTRIES_TIMER){
-            println!("Time elapsed {:?} ", now.duration_since(reset_tracker));
-            println!("Len hash {}", tls_flow_tracker.len());
             tls_flow_tracker.retain(|_, &mut (_, _, last_seen)| now.duration_since(last_seen) < Duration::from_secs(CLEAR_OLD_ENTRIES_TIMER)); // Remove idle flows
             reset_tracker = now;
-            println!("Len hash {}", tls_flow_tracker.len());
         }
     }
 
