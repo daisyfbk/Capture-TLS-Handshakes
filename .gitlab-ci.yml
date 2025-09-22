@@ -56,8 +56,7 @@ upload:
   script:
     - echo "======== UPLOAD JOB ========"
     - ls -la bin/
-    - ls bin/capture-tls-handshakes-v${PKG_VERSION}
-    - 'curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file bin/capture-tls-handshakes-v${PKG_VERSION} ${PKG_REGISTRY_URL}/x86_64-unknown-linux-gnu/v${PKG_VERSION}/capture-tls-handshakes'
+    - 'curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file bin/capture_tls_handshake-v${PKG_VERSION} ${PKG_REGISTRY_URL}/x86_64-unknown-linux-gnu/v${PKG_VERSION}/capture-tls-handshakes'
 
 release:
   stage: release
