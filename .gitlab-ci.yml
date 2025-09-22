@@ -25,7 +25,7 @@ build:
   stage: build
   image: ubuntu:24.04
   needs:
-    - job: prepare-job
+    - job: prepare
       artifacts: true
   script:
     - echo "======== BUILD ========"
