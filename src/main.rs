@@ -213,6 +213,14 @@ fn main()  {
                     server_port: dst_port,
                 };
 
+                let inverse_flow = Flow {
+                    layer4_protocol: ip_proto as u16,
+                    client_ip: server_ip.clone(),
+                    server_ip: client_ip.clone(),
+                    client_port: dst_port,
+                    server_port: src_port,
+                };
+
                 // Check if is a Client Hello and save the Handshake version
                 if tcp_payload_len > 10 && tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_CLIENT_HELLO
                     && BITMAP_POSSIBLE_VERSIONS[u16::from_be_bytes([tcp_payload[1], tcp_payload[2]]) as usize]
@@ -225,14 +233,6 @@ fn main()  {
                         continue;
                     }
                 }
-
-                let inverse_flow = Flow {
-                    layer4_protocol: ip_proto as u16,
-                    client_ip: server_ip.clone(),
-                    server_ip: client_ip.clone(),
-                    client_port: dst_port,
-                    server_port: src_port,
-                };
 
                 let mut flow_exists = false;
                 let tls_version = match tls_flow_tracker.get(&flow) {
