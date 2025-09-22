@@ -10,6 +10,8 @@ use clap::Parser;
 use pcap::{Capture};
 
 
+const CLEAR_OLD_ENTRIES_TIMER: u64 = 60;
+
 // Sizes in bytes
 const ETH_SIZE: usize = 14;
 const IPV4_MIN_SIZE: usize = 20;
@@ -88,8 +90,8 @@ fn main()  {
         .unwrap();
     let linktype = cap.get_datalink();
 
-    let tls_flow_tracker = Arc::new(Mutex::new(HashMap::<Flow, (u8, u8, Instant)>::new()));
-    let tracker_clone = Arc::clone(&tls_flow_tracker);
+    let mut tls_flow_tracker = HashMap::<Flow, (u8, u8, Instant)>::new();
+    let mut reset_tracker = Instant::now();
 
     if !std::path::Path::new(&args.output_folder).exists() {
         std::fs::create_dir_all(&args.output_folder).expect("Failed to create output folder");
@@ -112,11 +114,6 @@ fn main()  {
             *output_pcap_guard = Capture::dead(linktype).unwrap()
                                     .savefile(format!("{}/log_{}.pcap", args.output_folder, filename))
                                     .expect("Failed to create output pcap");
-
-            let mut tracker = tracker_clone.lock().unwrap();
-            let now = Instant::now();
-            tracker.retain(|_, &mut (_, _, last_seen)| now.duration_since(last_seen) < Duration::from_secs(args.capturing_time)); // Remove idle flows
-            println!("Finished cleaning")
         }
     });
 
@@ -221,27 +218,28 @@ fn main()  {
                     server_port: src_port,
                 };
 
-                let mut tracker = tls_flow_tracker.lock().unwrap();
+                //let mut tracker = tls_flow_tracker.lock().unwrap();
                 // Check if is a Client Hello and save the Handshake version
                 if tcp_payload_len > 10 && tcp_payload[0] == TLS_HANDSHAKE_RECORD && tcp_payload[5] == TLS_CLIENT_HELLO
                     && BITMAP_POSSIBLE_VERSIONS[u16::from_be_bytes([tcp_payload[1], tcp_payload[2]]) as usize]
                     && BITMAP_POSSIBLE_VERSIONS[u16::from_be_bytes([tcp_payload[9], tcp_payload[10]]) as usize]  {
-                    if !tracker.contains_key(&flow) {
+                    if !tls_flow_tracker.contains_key(&flow) {
                         let now = Instant::now();
-                        tracker.insert(flow.clone(), (tcp_payload[9], tcp_payload[10], now));
-                        tracker.insert(inverse_flow.clone(), (tcp_payload[9], tcp_payload[10], now));
+                        tls_flow_tracker.insert(flow.clone(), (tcp_payload[9], tcp_payload[10], now));
+                        tls_flow_tracker.insert(inverse_flow.clone(), (tcp_payload[9], tcp_payload[10], now));
                         output_pcap.lock().unwrap().write(&packet);
                         continue;
                     }
+                    // Check if is CLient Hello and flow exists??
                 }
 
                 let mut flow_exists = false;
-                let tls_version = match tracker.get(&flow) {
+                let tls_version = match tls_flow_tracker.get(&flow) {
                     Some(&(first, second, _)) => {
                         flow_exists = true;
                         (first, second)
                     },
-                    None => match tracker.get(&inverse_flow) {
+                    None => match tls_flow_tracker.get(&inverse_flow) {
                         Some(&(first, second, _)) => {
                             flow_exists = true;
                             (first, second)
@@ -253,8 +251,8 @@ fn main()  {
                 if flow_exists{
                     // If it is a TCP packet with FIN/RST flag stop monitoring (Safety measure to remove flows)
                     if tcp_flags & TCP_FIN == TCP_FIN || tcp_flags & TCP_RST == TCP_RST {
-                        tracker.remove(&flow);
-                        tracker.remove(&inverse_flow);
+                        tls_flow_tracker.remove(&flow);
+                        tls_flow_tracker.remove(&inverse_flow);
                     }else if tcp_payload_len > TLS_RECORD_SIZE{
                         let mut save_pkt = true; // By default, packets for a tracked flow should be fowarded
                         let mut tls_offset: usize = 0;
@@ -270,8 +268,8 @@ fn main()  {
                         // If packet begins or has after the Server Hello a non-Handshake Record, stop capturing packets
                         if (tcp_payload[tls_offset] == TLS_CCS_RECORD || tcp_payload[tls_offset] == TLS_ALERT_RECORD || tcp_payload[tls_offset] == TLS_DATA_RECORD) && 
                             ((tcp_payload[tls_offset + 1], tcp_payload[tls_offset + 2]) == (tls_version.0, tls_version.1)){
-                            tracker.remove(&flow);
-                            tracker.remove(&inverse_flow);
+                            tls_flow_tracker.remove(&flow);
+                            tls_flow_tracker.remove(&inverse_flow);
 
                             // Save the packet if it had a Server Hello
                             if tls_offset == 0{
@@ -286,6 +284,15 @@ fn main()  {
 
                 }
             }       
+        }
+
+        let now = Instant::now();
+        if now.duration_since(reset_tracker) >  Duration::from_secs(CLEAR_OLD_ENTRIES_TIMER){
+            println!("Time elapsed {:?} ", now.duration_since(reset_tracker));
+            println!("Len hash {}", tls_flow_tracker.len());
+            tls_flow_tracker.retain(|_, &mut (_, _, last_seen)| now.duration_since(last_seen) < Duration::from_secs(CLEAR_OLD_ENTRIES_TIMER)); // Remove idle flows
+            reset_tracker = now;
+            println!("Len hash {}", tls_flow_tracker.len());
         }
     }
 
