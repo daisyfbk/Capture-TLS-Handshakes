@@ -168,14 +168,14 @@ fn main()  {
                     let proto = packet.data[offset + 6];
                     let src_ip = &packet.data[offset + 8..offset + 24];
                     let dst_ip = &packet.data[offset + 24..offset + 40];
-                    (proto, len - IPV6_SIZE, offset + IPV6_SIZE, src_ip.to_vec(), dst_ip.to_vec())
+                    (proto, len, offset + IPV6_SIZE, src_ip.to_vec(), dst_ip.to_vec())
                 }
                 _ => {
                     continue;
                 }
             };
 
-            // Only TCP and no parsing of IPv6 extension for now
+            // Only TCP and no parsing of IPv6 extensions for now
             if ip_proto == TCP {
                 if packet.data.len() < ip_payload_offset + TCP_MIN_SIZE {
                     continue;
@@ -190,16 +190,19 @@ fn main()  {
                 }
 
                 let tcp_flags = packet.data[ip_payload_offset + 13];
-
                 let tcp_header_size = ((packet.data[ip_payload_offset + 12] >> 4) * 4) as usize;
                 let tcp_payload_offset = ip_payload_offset + tcp_header_size;
+
                 if packet.data.len() < tcp_payload_offset {
                     continue;
                 }
 
                 let tcp_payload = &packet.data[tcp_payload_offset..];
-                let tcp_payload_len = len_after_ip - tcp_header_size; // Len from IP header - IP header size - TCP header size
+                let tcp_payload_len = len_after_ip - tcp_header_size; // Len from IP header - IPv4 header size - TCP header size
 
+                if tcp_payload_len > tcp_payload.len(){
+                    continue; // Malformed packet, len in IP header is bigger than actual packet size
+                }
                 // No payload and not TCP connection ending go to the next packet
                 if tcp_payload_len == 0 && (tcp_flags & TCP_FIN != TCP_FIN || tcp_flags & TCP_RST != TCP_RST) {
                     continue;
