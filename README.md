@@ -5,11 +5,6 @@ In such environments, handshake data appear as segmented packets to user-space t
 
 ## Installation
 
-If you are testing on an interface with TSO, GSO, or GRO enabled, make sure to disable them first.
-```
-sudo ethtool -K <INTERFACE> tso off gso off gro off
-```
-
 Install `libcap-dev` (Debian-based):
 
 ```
@@ -19,6 +14,11 @@ sudo apt-get install libpcap-dev
 Download the latest binary release from this project and provide it with execution permissions.
 
 ## Quick Start
+
+If you are testing on an interface with TSO, GSO, or GRO enabled, make sure to disable them first.
+```
+sudo ethtool -K <INTERFACE> tso off gso off gro off
+```
 
 To monitor the interface this program requires certain priveliges. If not running as root, you need to set the following capacilites: `sudo setcap cap_net_raw,cap_net_admin=eip path/to/bin`
 
